@@ -1,0 +1,13 @@
+{
+  "name": "brickblast",
+  "version": "1.0.0",
+  "description": "A swipe-to-shoot arcade brick breaker for the web",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "check": "node --check index.js",
+    "test": "node --test game.test.js"
+  }
+}
