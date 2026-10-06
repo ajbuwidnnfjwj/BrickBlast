@@ -7,7 +7,7 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "check": "node --check index.js",
+    "check": "node --check constants.js && node --check index.js",
     "test": "node --test game.test.js"
   }
 }

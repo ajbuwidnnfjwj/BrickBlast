@@ -16,7 +16,11 @@ function setup(saved = {}) {
   const memory = { ...saved };
   const sandbox = { document: { querySelector: id => node(id.slice(1)), getElementById: node, addEventListener() {} }, localStorage: { getItem: key => memory[key], setItem: (key, value) => { memory[key] = value; } }, requestAnimationFrame: callback => { nextFrame = callback; }, Math: Object.create(Math) };
   sandbox.Math.random = () => .5;
-  vm.runInNewContext(fs.readFileSync('index.js', 'utf8'), sandbox);
+  const gameContext = vm.createContext(sandbox);
+  // 브라우저와 같은 순서로 설정을 먼저 읽고 게임을 시작합니다.
+  for (const script of ['constants.js', 'index.js']) {
+    vm.runInContext(fs.readFileSync(script, 'utf8'), gameContext, { filename: script });
+  }
   return { node, memory, labels, dots, frames(n) { for (let i = 0; i < n; i++) nextFrame(time += 16); }, shoot(x = 251) { const event = { clientX: x, clientY: 40, isPrimary: true, button: 0, pointerId: 1 }; node('game').listeners.pointerdown(event); node('game').listeners.pointerup(event); } };
 }
 
@@ -68,15 +72,15 @@ test('brick hits do not award bonus points and progress saves the best score', (
 
 test('recall progresses to game over and restart resets the board', () => {
   const game = setup();
-  for (let i = 0; i < 8; i++) { game.shoot(); game.node('recall').listeners.click(); }
+  for (let i = 0; i < 10; i++) { game.shoot(); game.node('recall').listeners.click(); }
   assert.equal(game.node('overlay').hidden, false);
   assert.equal(game.node('recall').disabled, true);
-  assert.equal(game.node('score').textContent, 8);
-  assert.equal(game.node('result').textContent, '8점');
+  assert.equal(game.node('score').textContent, 10);
+  assert.equal(game.node('result').textContent, '10점');
   game.node('play-again').listeners.click();
   assert.equal(game.node('overlay').hidden, true);
   assert.equal(game.node('score').textContent, 1);
-  assert.equal(game.node('best').textContent, 8);
+  assert.equal(game.node('best').textContent, 10);
 });
 
 test('new scoring ignores old hit-based records and restores stage records', () => {

@@ -1,164 +1,478 @@
 (() => {
   'use strict';
+
   const canvas = document.querySelector('#game');
-  const ctx = canvas.getContext('2d');
-  const ui = Object.fromEntries(['score','best','recall','overlay','result'].map(id => [id, document.getElementById(id)]));
-  const W = canvas.width, H = canvas.height, FLOOR = 513, R = 5, CELL = 60, LEFT = 16, SPEED = 510;
-  const BRICK_W = 62, BRICK_H = 46, COLUMN_STEP = BRICK_W + 6;
-  const palette = ['#b19afa','#83aaf7','#edaa87','#ee90ad','#8dcfc5'];
-  const BEST_KEY = 'brickblast-best-stage-v1';
-  let bricks, pickups, balls, particles, score, count, origin, phase, aim, dragging, fired, pending, shotTime, firstLanding, best = 0;
-  try { best = Number(localStorage.getItem(BEST_KEY)) || 0; } catch {}
-  function sync() {
-    if (score > best) { best = score; try { localStorage.setItem(BEST_KEY, String(best)); } catch {} }
-    ui.score.textContent = score; ui.best.textContent = best;
+  const context = canvas.getContext('2d');
+  const ui = {
+    score: document.getElementById('score'),
+    best: document.getElementById('best'),
+    recall: document.getElementById('recall'),
+    overlay: document.getElementById('overlay'),
+    result: document.getElementById('result'),
+    restart: document.getElementById('restart'),
+    playAgain: document.getElementById('play-again'),
+  };
+
+  const {
+    FLOOR_Y,
+    BALL_RADIUS,
+    BALL_SPEED,
+    SHOT_INTERVAL,
+    MAX_PHYSICS_STEP,
+    MAX_FRAME_DELTA,
+    BRICK_WIDTH,
+    BRICK_HEIGHT,
+    BRICK_GAP,
+    COLUMN_COUNT,
+    ROW_STEP,
+    ROW_TOP,
+    BOARD_LEFT,
+    PICKUP_HIT_DISTANCE,
+    BRICK_COLORS,
+    BEST_SCORE_KEY,
+  } = GAME_CONSTANTS;
+
+  // 설정값이 아니라 실제 Canvas와 설정으로부터 계산한 값입니다.
+  const BOARD_WIDTH = canvas.width;
+  const BOARD_HEIGHT = canvas.height;
+  const COLUMN_STEP = BRICK_WIDTH + BRICK_GAP;
+
+  // 여러 이벤트와 프레임에 걸쳐 유지하고 공유하는 게임 상태입니다.
+  // 한 함수에서만 사용하는 임시 값은 해당 함수 안에서 선언합니다.
+  let bricks;
+  let pickups;
+  let balls;
+  let particles;
+  let score;
+  let ballCount;
+  let launchX;
+  let phase; // aim: 조준, shooting: 발사 중, over: 게임 종료
+  let aimDirection;
+  let isDragging;
+  let firedBallCount;
+  let collectedBallCount;
+  let shotElapsed;
+  let firstLandingX;
+  let bestScore = loadBestScore();
+
+  function loadBestScore() {
+    try {
+      return Number(localStorage.getItem(BEST_SCORE_KEY)) || 0;
+    } catch {
+      // 저장소가 차단되어도 게임은 계속 진행합니다.
+      return 0;
+    }
+  }
+
+  function updateScoreboard() {
+    if (score > bestScore) {
+      bestScore = score;
+      try {
+        localStorage.setItem(BEST_SCORE_KEY, String(bestScore));
+      } catch {
+        // 저장하지 못한 경우 현재 실행 중의 최고 점수만 유지합니다.
+      }
+    }
+    ui.score.textContent = score;
+    ui.best.textContent = bestScore;
     ui.recall.disabled = phase !== 'shooting';
   }
-  function row() {
-    const columns = Array.from({ length: 7 }, (_, i) => i).sort(() => Math.random() - .5);
-    const total = Math.min(5, 3 + Math.floor(score / 7));
-    const color = palette[(score - 1) % palette.length];
-    for (let n = 0; n < total; n++) {
-      const hp = score
-      bricks.push({ x: LEFT + columns[n] * COLUMN_STEP, y: 24, hp, max: hp, color, flash: 0 });
+
+  // 턴 진행: 조준 → 공 발사 → 모두 귀환 → 벽돌 하강 → 다음 단계
+  function addBrickRow() {
+    const columns = Array.from({ length: COLUMN_COUNT }, (_, index) => index)
+      .sort(() => Math.random() - 0.5);
+    const brickCount = Math.min(5, 3 + Math.floor(score / 7));
+    const color = BRICK_COLORS[(score - 1) % BRICK_COLORS.length];
+
+    for (let index = 0; index < brickCount; index++) {
+      bricks.push({
+        x: BOARD_LEFT + columns[index] * COLUMN_STEP,
+        y: ROW_TOP,
+        hp: score,
+        color,
+        flash: 0,
+      });
     }
-    pickups.push({ x: LEFT + columns[total] * COLUMN_STEP + BRICK_W / 2, y: 24 + BRICK_H / 2 });
+    pickups.push({
+      x: BOARD_LEFT + columns[brickCount] * COLUMN_STEP + BRICK_WIDTH / 2,
+      y: ROW_TOP + BRICK_HEIGHT / 2,
+    });
   }
-  function reset() {
-    bricks = []; pickups = []; balls = []; particles = []; score = 1; count = 1;
-    origin = W / 2; phase = 'aim'; aim = { x: 0, y: -1 }; dragging = false; fired = 0; pending = 0; firstLanding = null;
-    ui.overlay.hidden = true; row(); sync();
+
+  function resetGame() {
+    bricks = [];
+    pickups = [];
+    balls = [];
+    particles = [];
+    score = 1;
+    ballCount = 1;
+    launchX = BOARD_WIDTH / 2;
+    phase = 'aim';
+    aimDirection = { x: 0, y: -1 };
+    isDragging = false;
+    firedBallCount = 0;
+    collectedBallCount = 0;
+    firstLandingX = null;
+    ui.overlay.hidden = true;
+    addBrickRow();
+    updateScoreboard();
   }
-  function launch() {
+
+  function launchBalls() {
     if (phase !== 'aim') return;
-    phase = 'shooting'; dragging = false; fired = 0; pending = 0; shotTime = 0; firstLanding = null; sync();
+
+    phase = 'shooting';
+    isDragging = false;
+    firedBallCount = 0;
+    collectedBallCount = 0;
+    shotElapsed = 0;
+    firstLandingX = null;
+    updateScoreboard();
   }
-  function finish() {
-    count += pending; origin = firstLanding ?? origin; balls = [];
-    for (const brick of bricks) brick.y += CELL;
-    for (const pickup of pickups) pickup.y += CELL;
-    pickups = pickups.filter(p => p.y < FLOOR - 15);
-    if (bricks.some(b => b.y + BRICK_H >= FLOOR - R)) {
-      phase = 'over'; ui.result.textContent = `${score.toLocaleString()}점`; ui.overlay.hidden = false;
-      document.getElementById('play-again').focus();
-    } else { score++; row(); phase = 'aim'; }
-    sync();
+
+  function finishTurn() {
+    // 획득한 공은 다음 턴부터 사용하며, 첫 귀환 위치에서 다시 발사합니다.
+    ballCount += collectedBallCount;
+    launchX = firstLandingX ?? launchX;
+    balls = [];
+    for (const brick of bricks) brick.y += ROW_STEP;
+    for (const pickup of pickups) pickup.y += ROW_STEP;
+    pickups = pickups.filter(pickup => pickup.y < FLOOR_Y - 15);
+
+    const hasReachedFloor = bricks.some(brick =>
+      brick.y + BRICK_HEIGHT >= FLOOR_Y - BALL_RADIUS
+    );
+    if (hasReachedFloor) {
+      phase = 'over';
+      ui.result.textContent = `${score.toLocaleString()}점`;
+      ui.overlay.hidden = false;
+      ui.playAgain.focus();
+    } else {
+      score++;
+      addBrickRow();
+      phase = 'aim';
+    }
+    updateScoreboard();
   }
-  function recall() {
+
+  function recallBalls() {
     if (phase !== 'shooting') return;
-    firstLanding ??= balls[0]?.x ?? origin;
-    finish();
+
+    firstLandingX ??= balls[0]?.x ?? launchX;
+    finishTurn();
   }
-  function burst(x, y, color, n = 9) {
-    for (let i = 0; i < n; i++) particles.push({ x, y, vx: (Math.random() - .5) * 150, vy: (Math.random() - .5) * 150, life: .5, color });
+
+  function createParticles(x, y, color, particleCount = 9) {
+    for (let index = 0; index < particleCount; index++) {
+      particles.push({
+        x, y,
+        vx: (Math.random() - 0.5) * 150,
+        vy: (Math.random() - 0.5) * 150,
+        life: 0.5,
+        color,
+      });
+    }
   }
-  function hit(brick) {
-    brick.hp--; brick.flash = .09;
-    if (brick.hp === 0) burst(brick.x + BRICK_W / 2, brick.y + BRICK_H / 2, brick.color);
+
+  function damageBrick(brick) {
+    brick.hp--;
+    brick.flash = 0.09;
+    if (brick.hp === 0) {
+      createParticles(brick.x + BRICK_WIDTH / 2, brick.y + BRICK_HEIGHT / 2, brick.color);
+    }
   }
-  function moveBall(ball, delta) {
+
+  function overlapsBrick(ball, brick) {
+    return ball.x + BALL_RADIUS > brick.x
+      && ball.x - BALL_RADIUS < brick.x + BRICK_WIDTH
+      && ball.y + BALL_RADIUS > brick.y
+      && ball.y - BALL_RADIUS < brick.y + BRICK_HEIGHT;
+  }
+
+  function bounceOffBrick(ball, brick, previousX, previousY) {
+    // 이동 전 위치로 부딪힌 면을 판단하고, 공을 벽돌 바깥으로 밀어냅니다.
+    if (previousY + BALL_RADIUS <= brick.y) {
+      ball.y = brick.y - BALL_RADIUS;
+      ball.vy = -Math.abs(ball.vy);
+    } else if (previousY - BALL_RADIUS >= brick.y + BRICK_HEIGHT) {
+      ball.y = brick.y + BRICK_HEIGHT + BALL_RADIUS;
+      ball.vy = Math.abs(ball.vy);
+    } else if (previousX < brick.x) {
+      ball.x = brick.x - BALL_RADIUS;
+      ball.vx = -Math.abs(ball.vx);
+    } else {
+      ball.x = brick.x + BRICK_WIDTH + BALL_RADIUS;
+      ball.vx = Math.abs(ball.vx);
+    }
+  }
+
+  // 실제 공과 조준 미리보기가 공유합니다. 벽돌의 내구도는 여기서 바꾸지 않습니다.
+  function moveBall(ball, deltaSeconds) {
     let bounced = false;
-    const oldX = ball.x, oldY = ball.y;
-    ball.x += ball.vx * delta; ball.y += ball.vy * delta;
-    if (ball.x < R) { bounced = true; ball.x = R; ball.vx = Math.abs(ball.vx); }
-    if (ball.x > W - R) { bounced = true; ball.x = W - R; ball.vx = -Math.abs(ball.vx); }
-    if (ball.y < R) { bounced = true; ball.y = R; ball.vy = Math.abs(ball.vy); }
+    const previousX = ball.x;
+    const previousY = ball.y;
+    ball.x += ball.vx * deltaSeconds;
+    ball.y += ball.vy * deltaSeconds;
+
+    if (ball.x < BALL_RADIUS) {
+      bounced = true;
+      ball.x = BALL_RADIUS;
+      ball.vx = Math.abs(ball.vx);
+    }
+    if (ball.x > BOARD_WIDTH - BALL_RADIUS) {
+      bounced = true;
+      ball.x = BOARD_WIDTH - BALL_RADIUS;
+      ball.vx = -Math.abs(ball.vx);
+    }
+    if (ball.y < BALL_RADIUS) {
+      bounced = true;
+      ball.y = BALL_RADIUS;
+      ball.vy = Math.abs(ball.vy);
+    }
+
     for (const brick of bricks) {
-      if (brick.hp <= 0) continue;
-      if (ball.x + R > brick.x && ball.x - R < brick.x + BRICK_W && ball.y + R > brick.y && ball.y - R < brick.y + BRICK_H) {
-        if (oldY + R <= brick.y) { ball.y = brick.y - R; ball.vy = -Math.abs(ball.vy); }
-        else if (oldY - R >= brick.y + BRICK_H) { ball.y = brick.y + BRICK_H + R; ball.vy = Math.abs(ball.vy); }
-        else if (oldX < brick.x) { ball.x = brick.x - R; ball.vx = -Math.abs(ball.vx); }
-        else { ball.x = brick.x + BRICK_W + R; ball.vx = Math.abs(ball.vx); }
-        return { bounced: true, brick };
-      }
+      if (brick.hp <= 0 || !overlapsBrick(ball, brick)) continue;
+
+      bounceOffBrick(ball, brick, previousX, previousY);
+      return { bounced: true, brick };
     }
     return { bounced, brick: null };
   }
-  function step(dt) {
-    if (phase === 'shooting') {
-      shotTime += dt;
-      while (fired < count && shotTime >= fired * .065) {
-        balls.push({ x: origin, y: FLOOR - R - 1, vx: aim.x * SPEED, vy: aim.y * SPEED, active: true }); fired++;
-      }
-      // Small simulation steps keep fast balls from passing through thin collision boundaries.
-      const steps = Math.ceil(dt / .006), delta = dt / steps;
-      for (let s = 0; s < steps; s++) for (const ball of balls) {
+
+  function createLaunchBall() {
+    return {
+      x: launchX,
+      y: FLOOR_Y - BALL_RADIUS - 1,
+      vx: aimDirection.x * BALL_SPEED,
+      vy: aimDirection.y * BALL_SPEED,
+    };
+  }
+
+  function collectPickups(ball) {
+    for (const pickup of pickups) {
+      const distance = Math.hypot(ball.x - pickup.x, ball.y - pickup.y);
+      if (pickup.taken || distance >= PICKUP_HIT_DISTANCE) continue;
+
+      pickup.taken = true;
+      collectedBallCount++;
+      createParticles(pickup.x, pickup.y, '#a2efc3', 12);
+    }
+  }
+
+  function updateShooting(deltaSeconds) {
+    shotElapsed += deltaSeconds;
+    while (firedBallCount < ballCount && shotElapsed >= firedBallCount * SHOT_INTERVAL) {
+      balls.push({ ...createLaunchBall(), active: true });
+      firedBallCount++;
+    }
+
+    // 한 프레임을 작은 간격으로 나눠 빠른 공이 벽돌을 통과하지 않게 합니다.
+    const stepCount = Math.ceil(deltaSeconds / MAX_PHYSICS_STEP);
+    const stepSeconds = deltaSeconds / stepCount;
+    for (let step = 0; step < stepCount; step++) {
+      for (const ball of balls) {
         if (!ball.active) continue;
-        const collision = moveBall(ball, delta);
-        if (collision.brick) hit(collision.brick);
-        for (const pickup of pickups) if (!pickup.taken && Math.hypot(ball.x - pickup.x, ball.y - pickup.y) < 17) {
-          pickup.taken = true; pending++; burst(pickup.x, pickup.y, '#a2efc3', 12);
+
+        const collision = moveBall(ball, stepSeconds);
+        if (collision.brick) damageBrick(collision.brick);
+        collectPickups(ball);
+        if (ball.y >= FLOOR_Y && ball.vy > 0) {
+          ball.active = false;
+          firstLandingX ??= ball.x;
         }
-        if (ball.y >= FLOOR && ball.vy > 0) { ball.active = false; firstLanding ??= ball.x; }
       }
-      bricks = bricks.filter(b => b.hp > 0); pickups = pickups.filter(p => !p.taken);
-      if (fired === count && balls.every(b => !b.active)) finish();
     }
-    particles.forEach(p => { p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }); particles = particles.filter(p => p.life > 0);
-    bricks.forEach(b => { b.flash = Math.max(0, b.flash - dt); });
+
+    bricks = bricks.filter(brick => brick.hp > 0);
+    pickups = pickups.filter(pickup => !pickup.taken);
+    if (firedBallCount === ballCount && balls.every(ball => !ball.active)) {
+      finishTurn();
+    }
   }
-  function rounded(x, y, w, h, r, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fill(); }
-  function label(text, x, y, size, color, weight = 600) { ctx.fillStyle = color; ctx.font = `${weight} ${size}px "DM Sans", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(text, x, y); }
-  function draw(time) {
-    ctx.clearRect(0, 0, W, H);
-    ctx.fillStyle = '#252a3f';
-    for (let x = 14; x < W; x += 20) for (let y = 14; y < FLOOR - 15; y += 20) { ctx.beginPath(); ctx.arc(x, y, .65, 0, Math.PI * 2); ctx.fill(); }
-    for (const b of bricks) {
-      ctx.fillStyle = '#0003'; ctx.fillRect(b.x, b.y + 3, BRICK_W, BRICK_H);
-      ctx.fillStyle = b.flash ? '#fff' : b.color; ctx.fillRect(b.x, b.y, BRICK_W, BRICK_H);
-      ctx.fillStyle = '#ffffff26'; ctx.fillRect(b.x + 7, b.y + 5, BRICK_W - 14, 2);
-      label(b.hp, b.x + BRICK_W / 2, b.y + BRICK_H / 2 + 1, 21, '#222238', 700);
+
+  function updateEffects(deltaSeconds) {
+    for (const particle of particles) {
+      particle.x += particle.vx * deltaSeconds;
+      particle.y += particle.vy * deltaSeconds;
+      particle.life -= deltaSeconds;
     }
-    for (const p of pickups) {
-      const pulse = Math.sin(time * .003) * 2;
-      ctx.strokeStyle = '#9ce7ba33'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(p.x, p.y, 16 + pulse, 0, Math.PI * 2); ctx.stroke();
-      ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, Math.PI * 2); ctx.fillStyle = '#a2efc3'; ctx.fill(); label('+', p.x, p.y, 18, '#1d493e');
+    particles = particles.filter(particle => particle.life > 0);
+    for (const brick of bricks) {
+      brick.flash = Math.max(0, brick.flash - deltaSeconds);
     }
-    ctx.strokeStyle = '#3d435d'; ctx.setLineDash([4, 6]); ctx.beginPath(); ctx.moveTo(12, FLOOR + 8); ctx.lineTo(W - 12, FLOOR + 8); ctx.stroke(); ctx.setLineDash([]);
+  }
+
+  // 화면 그리기
+  function drawCircle(x, y, radius, color) {
+    context.fillStyle = color;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  function drawLabel(text, x, y, size, color, weight = 600) {
+    context.fillStyle = color;
+    context.font = `${weight} ${size}px "DM Sans", sans-serif`;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(text, x, y);
+  }
+
+  function drawBackground() {
+    for (let x = 14; x < BOARD_WIDTH; x += 20) {
+      for (let y = 14; y < FLOOR_Y - 15; y += 20) {
+        drawCircle(x, y, 0.65, '#252a3f');
+      }
+    }
+  }
+
+  function drawBricks() {
+    for (const brick of bricks) {
+      context.fillStyle = '#0003';
+      context.fillRect(brick.x, brick.y + 3, BRICK_WIDTH, BRICK_HEIGHT);
+      context.fillStyle = brick.flash ? '#fff' : brick.color;
+      context.fillRect(brick.x, brick.y, BRICK_WIDTH, BRICK_HEIGHT);
+      context.fillStyle = '#ffffff26';
+      context.fillRect(brick.x + 7, brick.y + 5, BRICK_WIDTH - 14, 2);
+      drawLabel(brick.hp, brick.x + BRICK_WIDTH / 2, brick.y + BRICK_HEIGHT / 2 + 1, 21, '#222238', 700);
+    }
+  }
+
+  function drawPickups(timeMs) {
+    for (const pickup of pickups) {
+      const pulse = Math.sin(timeMs * 0.003) * 2;
+      context.strokeStyle = '#9ce7ba33';
+      context.lineWidth = 1;
+      context.beginPath();
+      context.arc(pickup.x, pickup.y, 16 + pulse, 0, Math.PI * 2);
+      context.stroke();
+      drawCircle(pickup.x, pickup.y, 10, '#a2efc3');
+      drawLabel('+', pickup.x, pickup.y, 18, '#1d493e');
+    }
+  }
+
+  function drawFloor() {
+    context.strokeStyle = '#3d435d';
+    context.setLineDash([4, 6]);
+    context.beginPath();
+    context.moveTo(12, FLOOR_Y + 8);
+    context.lineTo(BOARD_WIDTH - 12, FLOOR_Y + 8);
+    context.stroke();
+    context.setLineDash([]);
+  }
+
+  function drawAimPreview() {
+    const previewBall = createLaunchBall();
+    let dotSpacing = 0;
+
+    // 임시 공을 2px씩 이동시켜 첫 충돌 지점까지만 표시합니다.
+    for (let step = 0; step < 1600; step++) {
+      const collision = moveBall(previewBall, 2 / BALL_SPEED);
+      if (previewBall.y >= FLOOR_Y && previewBall.vy > 0) break;
+
+      dotSpacing += 2;
+      if (dotSpacing < 13 && !collision.bounced) continue;
+
+      dotSpacing -= 13;
+      context.globalAlpha = 0.8;
+      drawCircle(previewBall.x, previewBall.y, 2, '#c9b8ff');
+      if (collision.bounced) break;
+    }
+    context.globalAlpha = 1;
+  }
+
+  function drawBalls() {
     if (phase === 'aim') {
-      if (dragging) {
-        // Trace a temporary ball using the same collision rules as a real shot.
-        // Include the first contact point, without drawing a reflected path.
-        const preview = { x: origin, y: FLOOR - R - 1, vx: aim.x * SPEED, vy: aim.y * SPEED };
-        let spacing = 0;
-        for (let i = 0; i < 1600; i++) {
-          const collision = moveBall(preview, 2 / SPEED);
-          if (preview.y >= FLOOR && preview.vy > 0) break;
-          spacing += 2;
-          if (spacing < 13 && !collision.bounced) continue;
-          spacing -= 13;
-          ctx.globalAlpha = .8;
-          ctx.fillStyle = '#c9b8ff'; ctx.beginPath(); ctx.arc(preview.x, preview.y, 2, 0, Math.PI * 2); ctx.fill();
-          if (collision.bounced) break;
-        }
-        ctx.globalAlpha = 1;
-      }
-      ctx.shadowBlur = 16; ctx.shadowColor = '#c8b4ff'; ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(origin, FLOOR - R, R + 1, 0, Math.PI * 2); ctx.fill(); ctx.shadowBlur = 0;
-      label(`× ${count}`, origin, FLOOR + 26, 12, '#c0b3e6');
+      if (isDragging) drawAimPreview();
+
+      context.shadowBlur = 16;
+      context.shadowColor = '#c8b4ff';
+      drawCircle(launchX, FLOOR_Y - BALL_RADIUS, BALL_RADIUS + 1, '#fff');
+      context.shadowBlur = 0;
+      drawLabel(`× ${ballCount}`, launchX, FLOOR_Y + 26, 12, '#c0b3e6');
     }
-    for (const ball of balls) if (ball.active) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(ball.x, ball.y, R, 0, Math.PI * 2); ctx.fill(); }
-    if (phase === 'shooting') label(`${count} BALLS${pending ? `  +${pending}` : ''}`, W / 2, FLOOR + 26, 11, '#9eabc7');
-    for (const p of particles) { ctx.globalAlpha = p.life * 2; rounded(p.x, p.y, 3, 3, 1, p.color); } ctx.globalAlpha = 1;
+    for (const ball of balls) {
+      if (ball.active) drawCircle(ball.x, ball.y, BALL_RADIUS, '#fff');
+    }
+    if (phase === 'shooting') {
+      const extraBalls = collectedBallCount ? `  +${collectedBallCount}` : '';
+      drawLabel(`${ballCount} BALLS${extraBalls}`, BOARD_WIDTH / 2, FLOOR_Y + 26, 11, '#9eabc7');
+    }
   }
-  function target(event) {
-    const rect = canvas.getBoundingClientRect();
-    const dx = (event.clientX - rect.left) / rect.width * W - origin;
-    const dy = Math.min(-35, (event.clientY - rect.top) / rect.height * H - FLOOR);
-    const length = Math.hypot(dx, dy); aim = { x: dx / length, y: dy / length };
+
+  function drawParticles() {
+    for (const particle of particles) {
+      context.globalAlpha = particle.life * 2;
+      context.fillStyle = particle.color;
+      context.beginPath();
+      context.roundRect(particle.x, particle.y, 3, 3, 1);
+      context.fill();
+    }
+    context.globalAlpha = 1;
   }
+
+  function drawGame(timeMs) {
+    context.clearRect(0, 0, BOARD_WIDTH, BOARD_HEIGHT);
+    drawBackground();
+    drawBricks();
+    drawPickups(timeMs);
+    drawFloor();
+    drawBalls();
+    drawParticles();
+  }
+
+  // 입력 처리: 화면 좌표를 Canvas 좌표로 바꾸고 위쪽으로만 조준합니다.
+  function updateAim(event) {
+    const bounds = canvas.getBoundingClientRect();
+    const pointerX = (event.clientX - bounds.left) / bounds.width * BOARD_WIDTH;
+    const pointerY = (event.clientY - bounds.top) / bounds.height * BOARD_HEIGHT;
+    const directionX = pointerX - launchX;
+    const directionY = Math.min(-35, pointerY - FLOOR_Y);
+    const length = Math.hypot(directionX, directionY);
+    aimDirection = { x: directionX / length, y: directionY / length };
+  }
+
   canvas.addEventListener('pointerdown', event => {
     if (phase !== 'aim' || !event.isPrimary || event.button !== 0) return;
-    canvas.focus(); dragging = true; canvas.setPointerCapture(event.pointerId); target(event);
+
+    canvas.focus();
+    isDragging = true;
+    canvas.setPointerCapture(event.pointerId);
+    updateAim(event);
   });
-  canvas.addEventListener('pointermove', event => { if (dragging && event.isPrimary) target(event); });
-  canvas.addEventListener('pointerup', event => { if (dragging && event.isPrimary) { target(event); launch(); } });
-  canvas.addEventListener('pointercancel', () => { dragging = false; });
-  canvas.addEventListener('lostpointercapture', () => { dragging = false; });
-  document.getElementById('restart').addEventListener('click', reset);
-  document.getElementById('play-again').addEventListener('click', () => { reset(); canvas.focus(); });
-  ui.recall.addEventListener('click', recall);
-  let last = 0;
-  function frame(time) { const dt = Math.min((time - last) / 1000, .033); last = time; step(dt); draw(time); requestAnimationFrame(frame); }
-  reset(); requestAnimationFrame(frame);
+  canvas.addEventListener('pointermove', event => {
+    if (isDragging && event.isPrimary) updateAim(event);
+  });
+  canvas.addEventListener('pointerup', event => {
+    if (!isDragging || !event.isPrimary) return;
+
+    updateAim(event);
+    launchBalls();
+  });
+  canvas.addEventListener('pointercancel', () => {
+    isDragging = false;
+  });
+  canvas.addEventListener('lostpointercapture', () => {
+    isDragging = false;
+  });
+  ui.restart.addEventListener('click', resetGame);
+  ui.playAgain.addEventListener('click', () => {
+    resetGame();
+    canvas.focus();
+  });
+  ui.recall.addEventListener('click', recallBalls);
+
+  let lastFrameTime = 0;
+  function animateFrame(timeMs) {
+    const deltaSeconds = Math.min((timeMs - lastFrameTime) / 1000, MAX_FRAME_DELTA);
+    lastFrameTime = timeMs;
+    if (phase === 'shooting') updateShooting(deltaSeconds);
+    updateEffects(deltaSeconds);
+    drawGame(timeMs);
+    requestAnimationFrame(animateFrame);
+  }
+
+  resetGame();
+  requestAnimationFrame(animateFrame);
 })();
