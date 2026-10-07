@@ -7,7 +7,7 @@ const GAME_CONSTANTS = Object.freeze({
   FLOOR_Y: 523,
   BALL_RADIUS: 6,
   BALL_SPEED: 510,
-  SHOT_INTERVAL: 0.065,
+  SHOT_INTERVAL: 0.04,
   MAX_PHYSICS_STEP: 0.006,
   MAX_FRAME_DELTA: 0.033,
   // 참고 이미지처럼 가로:세로 약 1.5:1, 블록 사이 간격은 가로·세로 2px입니다.

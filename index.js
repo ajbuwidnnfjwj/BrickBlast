@@ -138,6 +138,8 @@
     balls = [];
     for (const brick of bricks) brick.y += ROW_STEP;
     for (const pickup of pickups) pickup.y += ROW_STEP;
+    // 바닥까지 내려온 공 추가 아이템도 자동으로 획득합니다.
+    ballCount += pickups.filter(pickup => pickup.y >= FLOOR_Y - 15).length;
     pickups = pickups.filter(pickup => pickup.y < FLOOR_Y - 15);
 
     const hasReachedFloor = bricks.some(brick =>
@@ -273,12 +275,29 @@
       for (const ball of balls) {
         if (!ball.active) continue;
 
+        // 바닥에 닿은 공은 충돌 계산 없이 첫 착지 위치로 모입니다.
+        if (ball.returning) {
+          const distance = firstLandingX - ball.x;
+          const travel = BALL_SPEED * stepSeconds;
+          if (Math.abs(distance) <= travel) {
+            ball.x = firstLandingX;
+            ball.active = false;
+          } else {
+            ball.x += Math.sign(distance) * travel;
+          }
+          continue;
+        }
+
         const collision = moveBall(ball, stepSeconds);
         if (collision.brick) damageBrick(collision.brick);
         collectPickups(ball);
         if (ball.y + BALL_RADIUS >= FLOOR_Y && ball.vy > 0) {
-          ball.active = false;
           firstLandingX ??= ball.x;
+          ball.y = FLOOR_Y - BALL_RADIUS;
+          ball.vx = 0;
+          ball.vy = 0;
+          ball.returning = true;
+          ball.active = ball.x !== firstLandingX;
         }
       }
     }
@@ -401,7 +420,8 @@
       drawLabel(`× ${ballCount}`, launchX, FLOOR_Y + 26, 12, '#c0b3e6');
     }
     for (const ball of balls) {
-      if (ball.active) drawCircle(ball.x, ball.y, BALL_RADIUS, '#fff');
+      // 모인 공도 표시해서 첫 착지 위치에 쌓이는 모습을 유지합니다.
+      drawCircle(ball.x, ball.y, BALL_RADIUS, '#fff');
     }
     if (phase === 'shooting') {
       const extraBalls = collectedBallCount ? `  +${collectedBallCount}` : '';
