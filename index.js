@@ -141,13 +141,12 @@
     pickups = pickups.filter(pickup => pickup.y < FLOOR_Y - 15);
 
     const hasReachedFloor = bricks.some(brick =>
-      brick.y + BRICK_HEIGHT >= FLOOR_Y - BALL_RADIUS
+      brick.y + BRICK_HEIGHT >= FLOOR_Y
     );
     if (hasReachedFloor) {
       phase = 'over';
       ui.result.textContent = `${score.toLocaleString()}점`;
       ui.overlay.hidden = false;
-      ui.playAgain.focus();
     } else {
       score++;
       addBrickRow();
@@ -277,7 +276,7 @@
         const collision = moveBall(ball, stepSeconds);
         if (collision.brick) damageBrick(collision.brick);
         collectPickups(ball);
-        if (ball.y >= FLOOR_Y && ball.vy > 0) {
+        if (ball.y + BALL_RADIUS >= FLOOR_Y && ball.vy > 0) {
           ball.active = false;
           firstLandingX ??= ball.x;
         }
@@ -329,13 +328,17 @@
 
   function drawBricks() {
     for (const brick of bricks) {
-      context.fillStyle = '#0003';
-      context.fillRect(brick.x, brick.y + 3, BRICK_WIDTH, BRICK_HEIGHT);
       context.fillStyle = brick.flash ? '#fff' : brick.color;
       context.fillRect(brick.x, brick.y, BRICK_WIDTH, BRICK_HEIGHT);
-      context.fillStyle = '#ffffff26';
-      context.fillRect(brick.x + 7, brick.y + 5, BRICK_WIDTH - 14, 2);
-      drawLabel(brick.hp, brick.x + BRICK_WIDTH / 2, brick.y + BRICK_HEIGHT / 2 + 1, 21, '#222238', 700);
+
+      drawLabel(
+        brick.hp,
+        brick.x + BRICK_WIDTH / 2,
+        brick.y + BRICK_HEIGHT / 2 + 1,
+        21,
+        '#222238',
+        700
+      );
     }
   }
 
@@ -356,8 +359,8 @@
     context.strokeStyle = '#3d435d';
     context.setLineDash([4, 6]);
     context.beginPath();
-    context.moveTo(12, FLOOR_Y + 8);
-    context.lineTo(BOARD_WIDTH - 12, FLOOR_Y + 8);
+    context.moveTo(12, FLOOR_Y);
+    context.lineTo(BOARD_WIDTH - 12, FLOOR_Y);
     context.stroke();
     context.setLineDash([]);
   }
@@ -369,7 +372,7 @@
     // 임시 공을 2px씩 이동시켜 첫 충돌 지점까지만 표시합니다.
     for (let step = 0; step < 1600; step++) {
       const collision = moveBall(previewBall, 2 / BALL_SPEED);
-      if (previewBall.y >= FLOOR_Y && previewBall.vy > 0) break;
+      if (previewBall.y + BALL_RADIUS >= FLOOR_Y && previewBall.vy > 0) break;
 
       dotSpacing += 2;
       if (dotSpacing < 13 && !collision.bounced) continue;
@@ -388,7 +391,7 @@
 
       context.shadowBlur = 16;
       context.shadowColor = '#c8b4ff';
-      drawCircle(launchX, FLOOR_Y - BALL_RADIUS, BALL_RADIUS + 1, '#fff');
+      drawCircle(launchX, FLOOR_Y - BALL_RADIUS, BALL_RADIUS, '#fff');
       context.shadowBlur = 0;
       drawLabel(`× ${ballCount}`, launchX, FLOOR_Y + 26, 12, '#c0b3e6');
     }
@@ -435,8 +438,6 @@
 
   canvas.addEventListener('pointerdown', event => {
     if (phase !== 'aim' || !event.isPrimary || event.button !== 0) return;
-
-    canvas.focus();
     isDragging = true;
     canvas.setPointerCapture(event.pointerId);
     updateAim(event);
@@ -459,7 +460,6 @@
   ui.restart.addEventListener('click', resetGame);
   ui.playAgain.addEventListener('click', () => {
     resetGame();
-    canvas.focus();
   });
   ui.recall.addEventListener('click', recallBalls);
 

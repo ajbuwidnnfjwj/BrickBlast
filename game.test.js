@@ -9,7 +9,7 @@ function setup(saved = {}) {
   const dots = [];
   const context = new Proxy({}, { get: (_, key) => key === 'fillText' ? text => labels.add(text) : key === 'arc' ? (x, y, radius) => { if (radius === 2) dots.push({ x, y }); } : () => {}, set: () => true });
   function node(id) {
-    if (!nodes.has(id)) nodes.set(id, { width: 502, height: 560, textContent: '', hidden: false, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }, focus() {}, setPointerCapture() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 502, height: 560 }), getContext: () => context });
+    if (!nodes.has(id)) nodes.set(id, { width: 492, height: 570, textContent: '', hidden: false, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; }, focus() {}, setPointerCapture() {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 492, height: 570 }), getContext: () => context });
     return nodes.get(id);
   }
   let nextFrame, time = 0;
@@ -21,21 +21,21 @@ function setup(saved = {}) {
   for (const script of ['constants.js', 'index.js']) {
     vm.runInContext(fs.readFileSync(script, 'utf8'), gameContext, { filename: script });
   }
-  return { node, memory, labels, dots, frames(n) { for (let i = 0; i < n; i++) nextFrame(time += 16); }, shoot(x = 251) { const event = { clientX: x, clientY: 40, isPrimary: true, button: 0, pointerId: 1 }; node('game').listeners.pointerdown(event); node('game').listeners.pointerup(event); } };
+  return { node, memory, labels, dots, frames(n) { for (let i = 0; i < n; i++) nextFrame(time += 16); }, shoot(x = 246) { const event = { clientX: x, clientY: 40, isPrimary: true, button: 0, pointerId: 1 }; node('game').listeners.pointerdown(event); node('game').listeners.pointerup(event); } };
 }
 
 test('aim preview stops at first side wall contact without reflecting', () => {
   const game = setup();
-  game.node('game').listeners.pointerdown({ clientX: 494, clientY: 480, isPrimary: true, button: 0, pointerId: 1 });
+  game.node('game').listeners.pointerdown({ clientX: 480, clientY: 480, isPrimary: true, button: 0, pointerId: 1 });
   game.frames(1);
   assert.ok(game.dots.length > 1);
   assert.ok(game.dots.slice(1).every((point, i) => point.x > game.dots[i].x));
-  assert.equal(game.dots.at(-1).x, 497);
+  assert.equal(game.dots.at(-1).x, 486);
   assert.equal(game.node('score').textContent, 1);
   assert.equal(game.node('recall').disabled, true);
 });
 
-for (const [surface, x, minY] of [['ceiling', 251, 5], ['brick', 100, 75]]) {
+for (const [surface, x, minY] of [['ceiling', 246, 6], ['brick', 100, 97]]) {
   test(`aim preview stops at first ${surface} contact without changing the board`, () => {
     const game = setup();
     game.node('game').listeners.pointerdown({ clientX: x, clientY: 40, isPrimary: true, button: 0, pointerId: 1 });
@@ -43,7 +43,7 @@ for (const [surface, x, minY] of [['ceiling', 251, 5], ['brick', 100, 75]]) {
     assert.ok(game.dots.length > 1);
     assert.equal(game.dots.at(-1).y, minY);
     assert.ok(game.dots.slice(1).every((point, i) => point.y < game.dots[i].y));
-    assert.ok(game.dots.every(point => point.y < 513));
+    assert.ok(game.dots.every(point => point.y < 523));
     const firstPath = [...game.dots];
     game.dots.length = 0;
     game.frames(1);
@@ -72,15 +72,22 @@ test('brick hits do not award bonus points and progress saves the best score', (
 
 test('recall progresses to game over and restart resets the board', () => {
   const game = setup();
-  for (let i = 0; i < 10; i++) { game.shoot(); game.node('recall').listeners.click(); }
+  // 8번 내려온 9칸째까지 생존하고, 다음 이동으로 10칸째에 닿으면 종료합니다.
+  for (let i = 0; i < 8; i++) {
+    game.shoot();
+    game.node('recall').listeners.click();
+    assert.equal(game.node('overlay').hidden, true);
+  }
+  game.shoot();
+  game.node('recall').listeners.click();
   assert.equal(game.node('overlay').hidden, false);
   assert.equal(game.node('recall').disabled, true);
-  assert.equal(game.node('score').textContent, 10);
-  assert.equal(game.node('result').textContent, '10점');
+  assert.equal(game.node('score').textContent, 9);
+  assert.equal(game.node('result').textContent, '9점');
   game.node('play-again').listeners.click();
   assert.equal(game.node('overlay').hidden, true);
   assert.equal(game.node('score').textContent, 1);
-  assert.equal(game.node('best').textContent, 10);
+  assert.equal(game.node('best').textContent, 9);
 });
 
 test('new scoring ignores old hit-based records and restores stage records', () => {

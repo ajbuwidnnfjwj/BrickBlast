@@ -24,7 +24,7 @@ button {
   cursor: pointer;
 }
 
-button:focus-visible,canvas:focus-visible {
+button:focus-visible {
   outline: 2px solid #b7a0ff;
   outline-offset: 4px;
 }
@@ -43,7 +43,7 @@ button:disabled {
 
 .game-shell {
   width: 100%;
-  max-width: 526px;
+  max-width: 516px;
   border: 1px solid #37354d;
   border-radius: 18px;
   background: #181c2d;
