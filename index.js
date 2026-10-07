@@ -380,7 +380,12 @@
       dotSpacing -= 13;
       context.globalAlpha = 0.8;
       drawCircle(previewBall.x, previewBall.y, 2, '#c9b8ff');
-      if (collision.bounced) break;
+      if (collision.bounced) {
+        // 첫 충돌 위치에 실제 공 크기를 겹쳐 표시합니다.
+        context.globalAlpha = 1;
+        drawCircle(previewBall.x, previewBall.y, BALL_RADIUS, '#c9b8ff');
+        break;
+      }
     }
     context.globalAlpha = 1;
   }
