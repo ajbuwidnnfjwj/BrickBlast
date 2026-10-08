@@ -184,61 +184,62 @@
     }
   }
 
-  function overlapsBrick(ball, brick) {
-    return ball.x + BALL_RADIUS > brick.x
-      && ball.x - BALL_RADIUS < brick.x + BRICK_WIDTH
-      && ball.y + BALL_RADIUS > brick.y
-      && ball.y - BALL_RADIUS < brick.y + BRICK_HEIGHT;
-  }
+  const CONTACT_EPSILON = 1e-9;
 
-  function bounceOffBrick(ball, brick, previousX, previousY) {
-    // 이동 전 위치로 부딪힌 면을 판단하고, 공을 벽돌 바깥으로 밀어냅니다.
-    if (previousY + BALL_RADIUS <= brick.y) {
-      ball.y = brick.y - BALL_RADIUS;
-      ball.vy = -Math.abs(ball.vy);
-    } else if (previousY - BALL_RADIUS >= brick.y + BRICK_HEIGHT) {
-      ball.y = brick.y + BRICK_HEIGHT + BALL_RADIUS;
-      ball.vy = Math.abs(ball.vy);
-    } else if (previousX < brick.x) {
-      ball.x = brick.x - BALL_RADIUS;
-      ball.vx = -Math.abs(ball.vx);
-    } else {
-      ball.x = brick.x + BRICK_WIDTH + BALL_RADIUS;
-      ball.vx = Math.abs(ball.vx);
+  function brickContact(ball, brick, dx, dy) {
+    // 기존 사각형 충돌 범위를 유지하되, 이동 구간 전체의 진입 시점을 구합니다.
+    function axisTimes(position, travel, min, max) {
+      if (travel === 0) {
+        return position > min && position < max ? [-Infinity, Infinity] : null;
+      }
+      const a = (min - position) / travel;
+      const b = (max - position) / travel;
+      return [Math.min(a, b), Math.max(a, b)];
     }
+    const x = axisTimes(ball.x, dx, brick.x - BALL_RADIUS, brick.x + BRICK_WIDTH + BALL_RADIUS);
+    const y = axisTimes(ball.y, dy, brick.y - BALL_RADIUS, brick.y + BRICK_HEIGHT + BALL_RADIUS);
+    if (!x || !y) return null;
+
+    const entry = Math.max(x[0], y[0]);
+    const exit = Math.min(x[1], y[1]);
+    if (entry < -CONTACT_EPSILON || entry > 1 || entry >= exit) return null;
+    return {
+      time: Math.max(0, entry),
+      reflectX: Math.abs(x[0] - entry) <= CONTACT_EPSILON,
+      reflectY: Math.abs(y[0] - entry) <= CONTACT_EPSILON,
+      brick,
+    };
   }
 
   // 실제 공과 조준 미리보기가 공유합니다. 벽돌의 내구도는 여기서 바꾸지 않습니다.
   function moveBall(ball, deltaSeconds) {
-    let bounced = false;
-    const previousX = ball.x;
-    const previousY = ball.y;
-    ball.x += ball.vx * deltaSeconds;
-    ball.y += ball.vy * deltaSeconds;
-
-    if (ball.x < BALL_RADIUS) {
-      bounced = true;
-      ball.x = BALL_RADIUS;
-      ball.vx = Math.abs(ball.vx);
+    const dx = ball.vx * deltaSeconds;
+    const dy = ball.vy * deltaSeconds;
+    let firstTime = 1;
+    let contacts = [];
+    function consider(contact) {
+      if (!contact || contact.time < 0 || contact.time > 1) return;
+      if (contact.time < firstTime - CONTACT_EPSILON) {
+        contacts = [contact];
+        firstTime = contact.time;
+      } else if (Math.abs(contact.time - firstTime) <= CONTACT_EPSILON) {
+        contacts.push(contact);
+        firstTime = Math.min(firstTime, contact.time);
+      }
     }
-    if (ball.x > BOARD_WIDTH - BALL_RADIUS) {
-      bounced = true;
-      ball.x = BOARD_WIDTH - BALL_RADIUS;
-      ball.vx = -Math.abs(ball.vx);
-    }
-    if (ball.y < BALL_RADIUS) {
-      bounced = true;
-      ball.y = BALL_RADIUS;
-      ball.vy = Math.abs(ball.vy);
-    }
-
+    if (dx < 0) consider({ time: (BALL_RADIUS - ball.x) / dx, reflectX: true });
+    if (dx > 0) consider({ time: (BOARD_WIDTH - BALL_RADIUS - ball.x) / dx, reflectX: true });
+    if (dy < 0) consider({ time: (BALL_RADIUS - ball.y) / dy, reflectY: true });
     for (const brick of bricks) {
-      if (brick.hp <= 0 || !overlapsBrick(ball, brick)) continue;
-
-      bounceOffBrick(ball, brick, previousX, previousY);
-      return { bounced: true, brick };
+      if (brick.hp > 0) consider(brickContact(ball, brick, dx, dy));
     }
-    return { bounced, brick: null };
+
+    // 가장 이른 접촉 위치에서 멈춥니다. 다음 작은 물리 스텝은 반사 방향으로 이동합니다.
+    ball.x += dx * firstTime;
+    ball.y += dy * firstTime;
+    if (contacts.some(contact => contact.reflectX)) ball.vx = -ball.vx;
+    if (contacts.some(contact => contact.reflectY)) ball.vy = -ball.vy;
+    return { bounced: contacts.length > 0, bricks: contacts.filter(contact => contact.brick).map(contact => contact.brick) };
   }
 
   function createLaunchBall() {
@@ -289,7 +290,7 @@
         }
 
         const collision = moveBall(ball, stepSeconds);
-        if (collision.brick) damageBrick(collision.brick);
+        for (const brick of collision.bricks) damageBrick(brick);
         collectPickups(ball);
         if (ball.y + BALL_RADIUS >= FLOOR_Y && ball.vy > 0) {
           firstLandingX ??= ball.x;
