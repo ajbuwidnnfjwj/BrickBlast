@@ -17,6 +17,7 @@
     FLOOR_Y,
     BALL_RADIUS,
     BALL_SPEED,
+    MAX_AIM_ANGLE_DEGREES,
     SHOT_INTERVAL,
     MAX_PHYSICS_STEP,
     MAX_FRAME_DELTA,
@@ -458,8 +459,9 @@
     const pointerY = (event.clientY - bounds.top) / bounds.height * BOARD_HEIGHT;
     const directionX = pointerX - launchX;
     const directionY = Math.min(-35, pointerY - FLOOR_Y);
-    const length = Math.hypot(directionX, directionY);
-    aimDirection = { x: directionX / length, y: directionY / length };
+    const maxAngle = MAX_AIM_ANGLE_DEGREES * Math.PI / 180;
+    const angle = Math.max(-maxAngle, Math.min(maxAngle, Math.atan2(directionX, -directionY)));
+    aimDirection = { x: Math.sin(angle), y: -Math.cos(angle) };
   }
 
   canvas.addEventListener('pointerdown', event => {

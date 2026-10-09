@@ -7,6 +7,7 @@ const GAME_CONSTANTS = Object.freeze({
   FLOOR_Y: 523,
   BALL_RADIUS: 6,
   BALL_SPEED: 1000,
+  MAX_AIM_ANGLE_DEGREES: 75, // 수직 기준 좌우 최대 발사 각도.
   SHOT_INTERVAL: 0.04,
   MAX_PHYSICS_STEP: 0.006,
   MAX_FRAME_DELTA: 0.033,
